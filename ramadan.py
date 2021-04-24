@@ -3,9 +3,8 @@ import requests
 import datetime
 import time
 import pytz
-from enum import Enum
 import logging
-
+from enum import Enum
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -22,27 +21,34 @@ class AzanTypes(Enum):
     Maghrib = 'Maghrib'
 
 
-def get_azan(city, day=0, azan_type=AzanTypes.Maghrib):
-    url = f"http://api.aladhan.com/v1/timingsByAddress"
-    data = requests.get(url, params={"address":city, "method": 7, "adjustment": day})
-    json_data = json.loads(data.content)['data']
+def get_azan(city, timestamp=None, azan_type=AzanTypes.Maghrib):
+    timestamp_text = f"/{timestamp}" if not timestamp is None else ""
+    url = f"http://api.aladhan.com/v1/timingsByAddress" + timestamp_text
+    try:
+        data = requests.get(url, params={"address":city, "method": 7})
+        json_data = json.loads(data.content)['data']
     
-    azan = json_data['timings'][azan_type.value]
+        azan      = json_data['timings'][azan_type.value]
+        timezone  = json_data['meta']['timezone']
+        timestamp = json_data['date']['timestamp']
+    except Exception as e:
+        print('Exception, ', e)
+        return None, None, None
     
-    return azan
+    return azan, timezone, int(timestamp)
 
-def get_now():
-    TEH = pytz.timezone('Asia/Tehran')
+def get_now(timezone):
+    TEH = pytz.timezone(timezone)
     now = datetime.datetime.now(TEH)
     now_text = str(now).split(' ')[-1].split('.')[0]
-    return "21:00:00"
+    
     return now_text
 
 def delta(time1, time2, fix_hour):
     h1, m1, s1 = [int(i) for i in time1.split(":")]
     h2, m2, s2 = [int(i) for i in time2.split(":")]
     h, m, s = h2-h1, m2-m1, s2-s1
-
+    
     if s < 0:
         s += 60
         m -= 1
@@ -53,22 +59,25 @@ def delta(time1, time2, fix_hour):
 
     if fix_hour and h < 0:
         h += 24
-        
+
     return (h, m, s)
 
-def calculate_reminder(city, azan_day=0):
-    azan = get_azan(city, azan_day)+":00"
-    now  = get_now()
+def calculate_reminder(city, new_timestamp=None):
+    azan, timezone, timestamp = get_azan(city, timestamp=new_timestamp)
+    if azan is None:
+        return None, None, None
+    azan += ":00"
+    now  = get_now(timezone)
     
-    rH, rM, rS = delta(now, azan, bool(azan_day))
+    rH, rM, rS = delta(now, azan, bool(new_timestamp))
 
     logger.debug(f"Now: {now} Azan is: {azan} >> {rH}:{rM}:{rS}")
     if rH < 0:
-        rH, rM, rS = calculate_reminder(city, 1)
+        rH, rM, rS = calculate_reminder(city, new_timestamp=timestamp+(24*60*60))
     return rH, rM, rS
 
 if __name__ == "__main__":
-    city = "بيرجند"
+    city = "چين"
     ch.setLevel(logging.DEBUG)
     print(calculate_reminder(city))
 
