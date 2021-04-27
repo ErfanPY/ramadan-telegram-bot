@@ -5,37 +5,9 @@ import time
 import pytz
 import logging
 from enum import Enum
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-ch.setFormatter(formatter)
-
-logger.addHandler(ch)
-
-class AzanTypes(Enum):
-    Maghrib = 'Maghrib'
-
-
-def get_azan(city, timestamp=None, azan_type=AzanTypes.Maghrib):
-    timestamp_text = f"/{timestamp}" if not timestamp is None else ""
-    url = f"http://api.aladhan.com/v1/timingsByAddress" + timestamp_text
-    try:
-        data = requests.get(url, params={"address":city, "method": 7})
-        json_data = json.loads(data.content)['data']
-    
-        azan      = json_data['timings'][azan_type.value]
-        timezone  = json_data['meta']['timezone']
-        timestamp = json_data['date']['timestamp']
-    except Exception as e:
-        print('Exception, ', e)
-        return None, None, None
-    
-    return azan, timezone, int(timestamp)
 
 def get_now(timezone):
     TEH = pytz.timezone(timezone)
@@ -62,25 +34,82 @@ def delta(time1, time2, fix_hour):
 
     return (h, m, s)
 
-def calculate_reminder(city, new_timestamp=None):
-    azan, timezone, timestamp = get_azan(city, timestamp=new_timestamp)
+
+def calculate_reminder(city, do_next_day=False):
+    azan, timezone = get_pray_zone_azan(city, do_next_day)
+    
     if azan is None:
         return None, None, None
+
     azan += ":00"
     now  = get_now(timezone)
     
-    rH, rM, rS = delta(now, azan, bool(new_timestamp))
+    rH, rM, rS = delta(now, azan, do_next_day)
 
-    logger.debug(f"Now: {now} Azan is: {azan} >> {rH}:{rM}:{rS}")
+    logging.debug(f"Now: {now} Azan is: {azan} >> {rH}:{rM}:{rS}")
+
     if rH < 0:
-        rH, rM, rS = calculate_reminder(city, new_timestamp=timestamp+(24*60*60))
+        # rH, rM, rS = calculate_reminder(city, True)
+        rH += 24
     return rH, rM, rS
 
-if __name__ == "__main__":
-    city = "چين"
-    ch.setLevel(logging.DEBUG)
-    print(calculate_reminder(city))
+def get_pray_zone_azan(city_addr, do_next_day=None):
 
-"""
-b'{"ok":true,"result":{"azan_sobh":"04:40:50","tolu_aftab":"06:05:12","azan_zohr":"12:33:28","ghorub_aftab":"19:02:16","azan_maghreb":"19:20:12","nimeshab":"23:51:33","month":1,"day":26}}'
-"""
+    lat_lng = get_lat_lng(city_addr)
+    if lat_lng is None:
+        return None, None
+
+    azan_url = "https://api.pray.zone/v2/times/"
+    
+    if do_next_day:
+        azan_url += "tomorrow.json"
+    else:
+        azan_url += "today.json"
+
+    try:
+        azan_resp = requests.get(azan_url, params={"latitude":lat_lng['lat'], "longitude":lat_lng['lng'], "elevation":"333", "school":7})
+    except Exception as e:
+        logging.error(f"Gettign prayer time Errored, {e}")
+        return None, None
+    azan_json = json.loads(azan_resp.content)
+
+    if not azan_json['code'] == 200:
+        logging.error("Gettign prayer time failed Not 200")
+        return None, None
+
+    Maghrib  = azan_json['results']['datetime'][0]['times']['Maghrib']
+    timezone = azan_json['results']['location']['timezone']
+
+    return Maghrib, timezone
+
+def get_lat_lng(city_addr):
+    key2 = "b6458d76cfc1440d827d43d9b9a5b2a0"
+    url2 = "https://api.opencagedata.com/geocode/v1/json"
+
+    try:
+        location_resp = requests.get(url2, params={"q":city_addr, "key":key2})
+    except Exception as e:
+        logging.error(f"Getting city failed, {e}")
+        return None
+
+    json_data = json.loads(location_resp.content)
+    # city = json_data['results'][0]['formatted']
+    lat_lng = json_data['results'][0]['geometry']
+    return lat_lng
+
+    # key = "66752dc70ec2e4e9151abea6f6592233"
+    # location_url = "http://api.positionstack.com/v1/forward"
+
+    # try:
+    #     location_resp = requests.get(location_url, params={"access_key":key, "query":city_addr})
+    # except Exception as e:
+    #     logging.error(f"Getting city failed, {e}")
+    #     return None
+    
+    # location_json = json.loads(location_resp.content)
+    # city = location_json['data'][0]['name']
+
+
+if __name__ == "__main__":
+    city = "بیرجند"
+    print(calculate_reminder(city))
